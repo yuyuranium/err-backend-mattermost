@@ -77,6 +77,7 @@ class MattermostBackend(ErrBot):
             "user_removed": [self._room_left_event_handler],
             "reaction_added": [self._reaction_event_handler],
             "reaction_removed": [self._reaction_event_handler],
+            "post_deleted": [self._reaction_event_handler],
         }
 
     def set_message_size_limit(self, limit=16377, hard_limit=16383):
@@ -278,7 +279,7 @@ class MattermostBackend(ErrBot):
     def _reaction_event_handler(self, message):
         event = message["event"]
         data = message["data"]
-        reaction = eval(data["reaction"])
+        reaction = eval(data.get("reaction", "None"))
         broadcast = message["broadcast"]
 
         action = REACTION_ADDED
@@ -286,6 +287,24 @@ class MattermostBackend(ErrBot):
             action = REACTION_ADDED
         elif event == "reaction_removed":
             action = REACTION_REMOVED
+        elif event == "post_deleted":
+            # Dirty way to handle post deleted
+            action = "post_deleted"
+            log.debug("{}".format(data))
+            post = json.loads(data["post"])
+            reaction = Reaction(
+                action=action,
+                reactor=self.build_identifier(data["delete_by"]),
+                reaction_name="delete",
+                reacted_to_owner=MattermostRoom(
+                    channelid=post["channel_id"],
+                    teamid=self.teamid,
+                    bot=self,
+                ),
+                reacted_to={"id": post["id"]},
+            )
+            self.callback_reaction(reaction)
+            return
         else:
             log.error("Unsupported event {}".format(event))
             return
@@ -303,7 +322,7 @@ class MattermostBackend(ErrBot):
         if "post_id" not in reaction:
             log.error("No post_id in reaction {}".format(reaction))
             return
-        reacted_to = reaction["post_id"]
+        reacted_to = self.driver.posts.get_post(reaction["post_id"])
 
         if "channel_id" in data:
             channelid = data["channel_id"]
